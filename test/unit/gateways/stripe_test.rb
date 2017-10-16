@@ -743,11 +743,39 @@ class StripeTest < Test::Unit::TestCase
 
   def test_add_creditcard_with_track_data
     post = {}
-    @credit_card.stubs(:track_data).returns("Tracking data")
-    @credit_card.stubs(:contactless_magstripe).returns(true)
+    @credit_card.stubs(:track_data).returns("Swipe data")
+    @credit_card.stubs(:read_method).returns('contactless_magstripe')
     @gateway.send(:add_creditcard, post, @credit_card, {})
     assert_equal @credit_card.track_data, post[:card][:swipe_data]
     assert_equal "contactless_magstripe_mode", post[:card][:read_method]
+    assert_nil post[:card][:number]
+    assert_nil post[:card][:exp_year]
+    assert_nil post[:card][:exp_month]
+    assert_nil post[:card][:cvc]
+    assert_nil post[:card][:name]
+  end
+
+  def test_add_creditcard_with_fallback_no_chip
+    post = {}
+    @credit_card.stubs(:track_data).returns("Swipe data")
+    @credit_card.stubs(:read_method).returns('fallback_no_chip')
+    @gateway.send(:add_creditcard, post, @credit_card, {})
+    assert_equal @credit_card.track_data, post[:card][:swipe_data]
+    assert_equal "no_chip", post[:card][:fallback_reason]
+    assert_nil post[:card][:number]
+    assert_nil post[:card][:exp_year]
+    assert_nil post[:card][:exp_month]
+    assert_nil post[:card][:cvc]
+    assert_nil post[:card][:name]
+  end
+
+  def test_add_creditcard_with_fallback_chip_error
+    post = {}
+    @credit_card.stubs(:track_data).returns("Swipe data")
+    @credit_card.stubs(:read_method).returns('fallback_chip_error')
+    @gateway.send(:add_creditcard, post, @credit_card, {})
+    assert_equal @credit_card.track_data, post[:card][:swipe_data]
+    assert_equal "chip_error", post[:card][:fallback_reason]
     assert_nil post[:card][:number]
     assert_nil post[:card][:exp_year]
     assert_nil post[:card][:exp_month]
@@ -888,6 +916,24 @@ class StripeTest < Test::Unit::TestCase
     end.respond_with(successful_purchase_response)
   end
 
+  def test_quickchip_is_set_on_purchase
+    stub_comms(@gateway, :ssl_request) do
+      @emv_credit_card.read_method = 'contact_quickchip'
+      @gateway.purchase(@amount, @emv_credit_card, @options)
+    end.check_request do |method, endpoint, data, headers|
+      assert_match(/card\[processing_method\]=quick_chip/, data)
+    end.respond_with(successful_purchase_response)
+  end
+
+  def test_quickchip_is_not_set_on_authorize
+    stub_comms(@gateway, :ssl_request) do
+      @emv_credit_card.read_method = 'contact_quickchip'
+      @gateway.authorize(@amount, @emv_credit_card, @options)
+    end.check_request do |method, endpoint, data, headers|
+      refute_match(/card\[processing_method\]=quick_chip/, data)
+    end.respond_with(successful_purchase_response)
+  end
+
   def test_add_address
     post = {:card => {}}
     @gateway.send(:add_address, post, @options)
@@ -1016,9 +1062,9 @@ class StripeTest < Test::Unit::TestCase
     end.respond_with(successful_purchase_response)
   end
 
-  def test_contactless_emv_flag_is_included_with_emv_card_data
+  def test_contactless_flag_is_included_with_emv_card_data
     stub_comms(@gateway, :ssl_request) do
-      @emv_credit_card.contactless_emv = true
+      @emv_credit_card.read_method = 'contactless'
       @gateway.purchase(@amount, @emv_credit_card, @options)
     end.check_request do |method, endpoint, data, headers|
       data =~ /card\[read_method\]=contactless/
@@ -1027,7 +1073,7 @@ class StripeTest < Test::Unit::TestCase
 
   def test_contactless_magstripe_flag_is_included_with_emv_card_data
     stub_comms(@gateway, :ssl_request) do
-      @emv_credit_card.contactless_magstripe = true
+      @emv_credit_card.read_method = 'contactless_magstripe'
       @gateway.purchase(@amount, @emv_credit_card, @options)
     end.check_request do |method, endpoint, data, headers|
       data =~ /card\[read_method\]=contactless_magstripe_mode/

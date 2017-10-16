@@ -112,6 +112,7 @@ module ActiveMerchant #:nodoc:
           end
           r.process do
             post = create_post_for_auth_or_purchase(money, payment, options)
+            post[:card][:processing_method] = 'quick_chip' if quickchip_payment?(payment)
             commit(:post, 'charges', post, options)
           end
         end.responses.last
@@ -383,8 +384,7 @@ module ActiveMerchant #:nodoc:
         card = {}
         if emv_payment?(creditcard)
           add_emv_creditcard(post, creditcard.icc_data)
-          post[:card][:read_method] = "contactless" if creditcard.contactless_emv
-          post[:card][:read_method] = "contactless_magstripe_mode" if creditcard.contactless_magstripe
+          post[:card][:read_method] = "contactless" if creditcard.read_method == 'contactless'
           if creditcard.encrypted_pin_cryptogram.present? && creditcard.encrypted_pin_ksn.present?
             post[:card][:encrypted_pin] = creditcard.encrypted_pin_cryptogram
             post[:card][:encrypted_pin_key_id] = creditcard.encrypted_pin_ksn
@@ -392,9 +392,11 @@ module ActiveMerchant #:nodoc:
         elsif creditcard.respond_to?(:number)
           if creditcard.respond_to?(:track_data) && creditcard.track_data.present?
             card[:swipe_data] = creditcard.track_data
-            card[:fallback_reason] = creditcard.fallback_reason if creditcard.fallback_reason
-            card[:read_method] = "contactless" if creditcard.contactless_emv
-            card[:read_method] = "contactless_magstripe_mode" if creditcard.contactless_magstripe
+            if creditcard.respond_to?(:read_method)
+              card[:fallback_reason] = 'no_chip' if creditcard.read_method == 'fallback_no_chip'
+              card[:fallback_reason] = 'chip_error' if creditcard.read_method == 'fallback_chip_error'
+              card[:read_method] = "contactless_magstripe_mode" if creditcard.read_method == 'contactless_magstripe'
+            end
           else
             card[:number] = creditcard.number
             card[:exp_month] = creditcard.month
@@ -584,6 +586,10 @@ module ActiveMerchant #:nodoc:
 
       def emv_payment?(payment)
         payment.respond_to?(:emv?) && payment.emv?
+      end
+
+      def quickchip_payment?(payment)
+        payment.respond_to?(:read_method) && payment.read_method == 'contact_quickchip'
       end
 
       def card_from_response(response)
